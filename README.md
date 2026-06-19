@@ -31,3 +31,7 @@ git clone https://github.com/YOUR_USERNAME/DataLens-AI.git
 cd DataLens-AI
 pip install -r requirements.txt
 streamlit run app.py
+
+## Live Demo
+
+https://your-app.streamlit.app
