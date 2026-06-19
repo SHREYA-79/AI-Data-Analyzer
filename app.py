@@ -117,7 +117,7 @@ miss_cls = "kpi-good" if miss_pct == 0 else ("kpi-warn" if miss_pct < 5 else "kp
 dupe_cls = "kpi-good" if dupes == 0 else "kpi-warn"
 st.markdown(f"""
 
-══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 tabs = st.tabs(["📋 Overview","📊 Distributions","🔗 Relationships",
 "📈 Trends","🧹 Data Quality","💼 Business Summary","🤖 Ask AI"])
 
