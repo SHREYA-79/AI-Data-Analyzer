@@ -7,7 +7,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import io
 import warnings
-import requests
 from scipy import stats as scipy_stats
 warnings.filterwarnings("ignore")
 
@@ -35,6 +34,24 @@ def finding(icon, text):
 with st.sidebar:
     st.markdown("### 🔬 DataLens AI")
     st.caption("Business-ready EDA for data roles")
+    st.divider()
+    
+    # API Key Input
+    st.markdown("### 🔑 API Configuration")
+    api_key_input = st.text_input(
+        "Groq API Key",
+        type="password",
+        placeholder="Enter your Groq API key",
+        help="Get your API key from https://console.groq.com"
+    )
+    
+    # Try to get API key from secrets if available
+    if not api_key_input:
+        try:
+            api_key_input = st.secrets["GROQ_API_KEY"]
+        except:
+            pass
+    
     st.divider()
     st.markdown("Display")
     preview_n = st.slider("Preview rows", 5, 100, 15)
@@ -109,10 +126,6 @@ date_cols = df.select_dtypes(include=["datetime","datetimetz"]).columns.tolist()
 missing = int(df.isnull().sum().sum())
 miss_pct = round(missing / df.size * 100, 1)
 dupes = int(df.duplicated().sum())
-
-# ── KPI bar ───────────────────────────────────────────────────────────────────
-miss_cls = "kpi-good" if miss_pct == 0 else ("kpi-warn" if miss_pct < 5 else "kpi-bad")
-dupe_cls = "kpi-good" if dupes == 0 else "kpi-warn"
 
 # ══════════════════════════════════════════════════════════════════════════════
 tabs = st.tabs(["📋 Overview","📊 Distributions","🔗 Relationships",
@@ -213,7 +226,7 @@ with tabs[1]:
         sel_cols = st.multiselect("Select columns", num_cols, default=num_cols[:min(6,len(num_cols))], key="multi_dist")
         if sel_cols:
             cols_per_row = 3
-            rows_needed = (len(sel_cols)+cols_per_row-1)//cols_per_row
+            rows_needed = (len(sel_cols) + cols_per_row - 1) // cols_per_row
             fig_sub = make_subplots(rows=rows_needed, cols=cols_per_row,
                                    subplot_titles=sel_cols)
             for i, sc in enumerate(sel_cols):
@@ -554,6 +567,12 @@ with tabs[6]:
     sec("🤖","Ask AI About Your Data")
     st.markdown('Powered by Groq Llama 3.3 70B · Ask anything about your dataset — business questions, modeling advice, anomaly explanations.', unsafe_allow_html=True)
     
+    # Check if API key is provided
+    if not api_key_input:
+        st.warning("⚠️ Please enter your Groq API key in the sidebar to use AI features.")
+        st.info("Get your free API key from [Groq Console](https://console.groq.com)")
+        st.stop()
+    
     quick = st.selectbox("Quick questions", [
         "Custom question ↓",
         "What are the top 5 business insights from this data?",
@@ -575,9 +594,16 @@ with tabs[6]:
         if not question.strip():
             st.warning("Type a question above or pick one from the list.")
         else:
+            # Prepare data summary for AI
             summary = df.describe(include="all").round(3).to_string()
             miss_info = df.isnull().sum().to_string()
-            finding_txt= "\n".join([f"{i}. {t.replace('','').replace('','')}" for i,(_,t) in enumerate(findings,1)])
+            
+            # Create findings text without HTML tags
+            finding_texts = []
+            for i, (icon, text) in enumerate(findings, 1):
+                clean_text = text.replace("✅", "").replace("⚠️", "").replace("📊", "").strip()
+                finding_texts.append(f"{i}. {clean_text}")
+            finding_txt = "\n".join(finding_texts)
             
             prompt = f"""You are a senior data analyst and business intelligence expert. Analyze this dataset thoroughly and answer the user's question.
 
@@ -618,9 +644,8 @@ Keep it concise, sharp, and actionable."""
             
             with st.spinner("AI is analyzing your data..."):
                 try:
-                    client = Groq(
-                        api_key=st.secrets["GROQ_API_KEY"]
-                    )
+                    # Initialize Groq client with the API key
+                    client = Groq(api_key=api_key_input)
                     
                     response = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
@@ -636,24 +661,29 @@ Keep it concise, sharp, and actionable."""
                     
                     answer = response.choices[0].message.content
                     
-                    st.success("Analysis complete")
+                    st.success("✅ Analysis complete!")
                     
-                    st.markdown(
-                        f'<div class="insight-card"><p>{answer}</p></div>',
-                        unsafe_allow_html=True
-                    )
+                    # Display the answer in a nice format
+                    st.markdown("### 📊 AI Analysis Results")
+                    st.markdown(f'<div style="background: rgba(17, 24, 39, 0.7); padding: 20px; border-radius: 10px; border-left: 4px solid #3b82f6;">{answer}</div>', unsafe_allow_html=True)
                     
+                    # Download option
                     buf = io.StringIO()
-                    buf.write(
-                        f"DataLens AI\nQuestion: {question}\n\n{answer}"
-                    )
+                    buf.write(f"DataLens AI Analysis\n")
+                    buf.write(f"="*50 + "\n")
+                    buf.write(f"Question: {question}\n")
+                    buf.write(f"="*50 + "\n\n")
+                    buf.write(answer)
                     
                     st.download_button(
-                        "⬇️ Download analysis",
+                        "⬇️ Download Analysis",
                         buf.getvalue(),
                         file_name="datalens_ai_analysis.txt",
                         mime="text/plain"
                     )
                     
                 except Exception as e:
-                    st.error(f"AI error: {e}")
+                    st.error(f"❌ AI Error: {str(e)}")
+                    if "401" in str(e):
+                        st.warning("Your API key appears to be invalid. Please check it and try again.")
+                        st.info("Get a valid API key from: https://console.groq.com")
