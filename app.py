@@ -160,6 +160,15 @@ st.markdown("""
         border-radius: 10px;
         border: 1px solid #333;
     }
+    
+    /* Error handling */
+    .error-container {
+        background: #2a1a1a;
+        border: 1px solid #ff4444;
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -222,8 +231,22 @@ if uploaded_file is None:
 # ── Data Processing ────────────────────────────────────────────────────
 @st.cache_data
 def load_data(file):
-    """Load and process CSV file"""
+    """Load and process CSV file with duplicate column handling"""
     df = pd.read_csv(file)
+    
+    # Handle duplicate column names
+    if df.columns.duplicated().any():
+        # Rename duplicate columns
+        cols = pd.Series(df.columns)
+        for dup in cols[cols.duplicated()].unique():
+            cols[cols[cols == dup].index.values.tolist()] = [
+                f"{dup}_{i}" if i > 0 else dup 
+                for i in range(sum(cols == dup))
+            ]
+        df.columns = cols
+        
+        # Show warning to user
+        st.warning("⚠️ Duplicate column names detected and have been renamed for analysis")
     
     # Smart type conversion
     for col in df.columns:
@@ -243,6 +266,15 @@ def load_data(file):
     
     return df
 
+# ── Helper function for safe plotting ──────────────────────────────────
+def safe_plot(func, *args, **kwargs):
+    """Wrapper to safely create plots with error handling"""
+    try:
+        return func(*args, **kwargs)
+    except Exception as e:
+        st.error(f"⚠️ Could not create plot: {str(e)[:100]}...")
+        return None
+
 with st.spinner("🔄 Loading and analyzing data..."):
     df = load_data(uploaded_file)
 
@@ -255,7 +287,7 @@ datetime_cols = df.select_dtypes(include=['datetime64']).columns.tolist()
 total_rows = len(df)
 total_cols = len(df.columns)
 missing_values = df.isnull().sum().sum()
-missing_pct = round(missing_values / (total_rows * total_cols) * 100, 1)
+missing_pct = round(missing_values / (total_rows * total_cols) * 100, 1) if (total_rows * total_cols) > 0 else 0
 duplicates = df.duplicated().sum()
 
 # ── Metrics Dashboard ──────────────────────────────────────────────────
@@ -359,49 +391,54 @@ with tab2:
                 ["Histogram", "Box Plot", "Violin Plot", "Density"]
             )
         
-        # Create visualization
+        # Create visualization with safe plotting
         fig = None
         
-        if chart_type == "Histogram":
-            fig = px.histogram(
-                df, x=selected_col,
-                nbins=30,
-                title=f"Distribution of {selected_col}",
-                color_discrete_sequence=['#667eea']
-            )
-            fig.update_layout(
-                showlegend=False,
-                height=chart_height,
-                bargap=0.1
-            )
+        try:
+            if chart_type == "Histogram":
+                fig = px.histogram(
+                    df, x=selected_col,
+                    nbins=30,
+                    title=f"Distribution of {selected_col}",
+                    color_discrete_sequence=['#667eea']
+                )
+                fig.update_layout(
+                    showlegend=False,
+                    height=chart_height,
+                    bargap=0.1
+                )
+            
+            elif chart_type == "Box Plot":
+                fig = px.box(
+                    df, y=selected_col,
+                    title=f"Box Plot of {selected_col}",
+                    color_discrete_sequence=['#667eea']
+                )
+                fig.update_layout(height=chart_height)
+            
+            elif chart_type == "Violin Plot":
+                fig = px.violin(
+                    df, y=selected_col,
+                    box=True,
+                    title=f"Violin Plot of {selected_col}",
+                    color_discrete_sequence=['#667eea']
+                )
+                fig.update_layout(height=chart_height)
+            
+            elif chart_type == "Density":
+                fig = px.density_contour(
+                    df, x=selected_col,
+                    title=f"Density Plot of {selected_col}",
+                    color_discrete_sequence=['#667eea']
+                )
+                fig.update_layout(height=chart_height)
+            
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
         
-        elif chart_type == "Box Plot":
-            fig = px.box(
-                df, y=selected_col,
-                title=f"Box Plot of {selected_col}",
-                color_discrete_sequence=['#667eea']
-            )
-            fig.update_layout(height=chart_height)
-        
-        elif chart_type == "Violin Plot":
-            fig = px.violin(
-                df, y=selected_col,
-                box=True,
-                title=f"Violin Plot of {selected_col}",
-                color_discrete_sequence=['#667eea']
-            )
-            fig.update_layout(height=chart_height)
-        
-        elif chart_type == "Density":
-            fig = px.density_contour(
-                df, x=selected_col,
-                title=f"Density Plot of {selected_col}",
-                color_discrete_sequence=['#667eea']
-            )
-            fig.update_layout(height=chart_height)
-        
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"⚠️ Could not create visualization: {str(e)[:150]}...")
+            st.info("Try selecting a different column or chart type")
         
         # Categorical visualizations
         if categorical_cols:
@@ -413,28 +450,32 @@ with tab2:
             col1, col2 = st.columns(2)
             
             with col1:
-                # Bar chart
-                value_counts = df[cat_col].value_counts().head(10)
-                fig_bar = px.bar(
-                    x=value_counts.index,
-                    y=value_counts.values,
-                    title=f"Top Categories - {cat_col}",
-                    labels={'x': cat_col, 'y': 'Count'},
-                    color_discrete_sequence=['#667eea']
-                )
-                fig_bar.update_layout(showlegend=False, height=300)
-                st.plotly_chart(fig_bar, use_container_width=True)
+                try:
+                    value_counts = df[cat_col].value_counts().head(10)
+                    fig_bar = px.bar(
+                        x=value_counts.index,
+                        y=value_counts.values,
+                        title=f"Top Categories - {cat_col}",
+                        labels={'x': cat_col, 'y': 'Count'},
+                        color_discrete_sequence=['#667eea']
+                    )
+                    fig_bar.update_layout(showlegend=False, height=300)
+                    st.plotly_chart(fig_bar, use_container_width=True)
+                except Exception as e:
+                    st.error(f"⚠️ Could not create bar chart: {str(e)[:100]}...")
             
             with col2:
-                # Pie chart
-                fig_pie = px.pie(
-                    values=value_counts.values,
-                    names=value_counts.index,
-                    title=f"Distribution - {cat_col}",
-                    hole=0.4
-                )
-                fig_pie.update_layout(height=300)
-                st.plotly_chart(fig_pie, use_container_width=True)
+                try:
+                    fig_pie = px.pie(
+                        values=value_counts.values,
+                        names=value_counts.index,
+                        title=f"Distribution - {cat_col}",
+                        hole=0.4
+                    )
+                    fig_pie.update_layout(height=300)
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                except Exception as e:
+                    st.error(f"⚠️ Could not create pie chart: {str(e)[:100]}...")
 
 # ── TAB 3: Relationships ──────────────────────────────────────────────
 with tab3:
@@ -444,80 +485,97 @@ with tab3:
         # Correlation matrix
         st.markdown("#### 🔥 Correlation Matrix")
         
-        corr_matrix = df[numeric_cols].corr(method=corr_method).round(2)
-        
-        fig_corr = px.imshow(
-            corr_matrix,
-            text_auto=True,
-            aspect="auto",
-            color_continuous_scale="RdBu_r",
-            zmin=-1, zmax=1,
-            title=f"Correlation Matrix ({corr_method})"
-        )
-        fig_corr.update_layout(height=max(400, len(numeric_cols) * 35))
-        st.plotly_chart(fig_corr, use_container_width=True)
+        try:
+            corr_matrix = df[numeric_cols].corr(method=corr_method).round(2)
+            
+            fig_corr = px.imshow(
+                corr_matrix,
+                text_auto=True,
+                aspect="auto",
+                color_continuous_scale="RdBu_r",
+                zmin=-1, zmax=1,
+                title=f"Correlation Matrix ({corr_method})"
+            )
+            fig_corr.update_layout(height=max(400, len(numeric_cols) * 35))
+            st.plotly_chart(fig_corr, use_container_width=True)
+        except Exception as e:
+            st.error(f"⚠️ Could not create correlation matrix: {str(e)[:150]}...")
         
         # Top correlations
         st.divider()
         st.markdown("#### 🏆 Strongest Correlations")
         
-        corr_pairs = []
-        for i in range(len(corr_matrix.columns)):
-            for j in range(i+1, len(corr_matrix.columns)):
-                corr_pairs.append({
-                    'Feature 1': corr_matrix.columns[i],
-                    'Feature 2': corr_matrix.columns[j],
-                    'Correlation': corr_matrix.iloc[i, j]
-                })
-        
-        corr_df = pd.DataFrame(corr_pairs)
-        corr_df['|Correlation|'] = corr_df['Correlation'].abs()
-        corr_df = corr_df.sort_values('|Correlation|', ascending=False).head(10)
-        corr_df['Strength'] = corr_df['Correlation'].apply(
-            lambda x: '🟢 Strong' if abs(x) >= 0.7 else 
-                     '🟡 Moderate' if abs(x) >= 0.4 else '🔴 Weak'
-        )
-        corr_df['Direction'] = corr_df['Correlation'].apply(
-            lambda x: '📈 Positive' if x > 0 else '📉 Negative'
-        )
-        
-        st.dataframe(
-            corr_df[['Feature 1', 'Feature 2', 'Correlation', 'Strength', 'Direction']],
-            use_container_width=True,
-            hide_index=True
-        )
+        try:
+            corr_pairs = []
+            for i in range(len(corr_matrix.columns)):
+                for j in range(i+1, len(corr_matrix.columns)):
+                    corr_pairs.append({
+                        'Feature 1': corr_matrix.columns[i],
+                        'Feature 2': corr_matrix.columns[j],
+                        'Correlation': corr_matrix.iloc[i, j]
+                    })
+            
+            corr_df = pd.DataFrame(corr_pairs)
+            if not corr_df.empty:
+                corr_df['|Correlation|'] = corr_df['Correlation'].abs()
+                corr_df = corr_df.sort_values('|Correlation|', ascending=False).head(10)
+                corr_df['Strength'] = corr_df['Correlation'].apply(
+                    lambda x: '🟢 Strong' if abs(x) >= 0.7 else 
+                             '🟡 Moderate' if abs(x) >= 0.4 else '🔴 Weak'
+                )
+                corr_df['Direction'] = corr_df['Correlation'].apply(
+                    lambda x: '📈 Positive' if x > 0 else '📉 Negative'
+                )
+                
+                st.dataframe(
+                    corr_df[['Feature 1', 'Feature 2', 'Correlation', 'Strength', 'Direction']],
+                    use_container_width=True,
+                    hide_index=True
+                )
+        except Exception as e:
+            st.error(f"⚠️ Could not calculate correlations: {str(e)[:150]}...")
         
         # Scatter plot
         st.divider()
         st.markdown("#### 🔵 Scatter Plot")
         
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            x_col = st.selectbox("X-Axis", numeric_cols, key="scatter_x")
-        with col2:
-            y_col = st.selectbox("Y-Axis", numeric_cols, key="scatter_y")
-        with col3:
-            color_col = st.selectbox(
-                "Color By",
-                ["None"] + categorical_cols,
-                key="scatter_color"
-            )
-        
-        if x_col and y_col:
-            color = None if color_col == "None" else color_col
+        if len(numeric_cols) >= 2:
+            col1, col2, col3 = st.columns(3)
             
-            fig_scatter = px.scatter(
-                df,
-                x=x_col,
-                y=y_col,
-                color=color,
-                title=f"{y_col} vs {x_col}",
-                trendline="ols" if color is None else None,
-                opacity=0.7
-            )
-            fig_scatter.update_layout(height=chart_height)
-            st.plotly_chart(fig_scatter, use_container_width=True)
+            with col1:
+                x_col = st.selectbox("X-Axis", numeric_cols, key="scatter_x")
+            with col2:
+                y_col = st.selectbox("Y-Axis", numeric_cols, key="scatter_y")
+            with col3:
+                color_col = st.selectbox(
+                    "Color By",
+                    ["None"] + categorical_cols,
+                    key="scatter_color"
+                )
+            
+            if x_col and y_col and x_col != y_col:
+                try:
+                    color = None if color_col == "None" else color_col
+                    
+                    # Create clean dataset with unique column names
+                    plot_data = df[[x_col, y_col]].copy()
+                    if color:
+                        plot_data[color] = df[color]
+                    
+                    fig_scatter = px.scatter(
+                        plot_data,
+                        x=x_col,
+                        y=y_col,
+                        color=color,
+                        title=f"{y_col} vs {x_col}",
+                        trendline="ols" if color is None else None,
+                        opacity=0.7
+                    )
+                    fig_scatter.update_layout(height=chart_height)
+                    st.plotly_chart(fig_scatter, use_container_width=True)
+                except Exception as e:
+                    st.error(f"⚠️ Could not create scatter plot: {str(e)[:150]}...")
+                    st.info("Try selecting different columns or ensure columns have valid data")
 
 # ── TAB 4: Trends ──────────────────────────────────────────────────────
 with tab4:
@@ -532,52 +590,55 @@ with tab4:
             value_col = st.selectbox("Value Column", numeric_cols)
         
         if date_col and value_col:
-            # Prepare time series data
-            ts_data = df[[date_col, value_col]].dropna()
-            ts_data = ts_data.sort_values(date_col)
-            
-            # Resample options
-            resample_freq = st.selectbox(
-                "Resample",
-                ["None", "Daily", "Weekly", "Monthly", "Quarterly"]
-            )
-            
-            if resample_freq != "None":
-                freq_map = {
-                    "Daily": "D",
-                    "Weekly": "W",
-                    "Monthly": "ME",
-                    "Quarterly": "QE"
-                }
-                ts_data = ts_data.set_index(date_col)
-                ts_data = ts_data.resample(freq_map[resample_freq]).mean().reset_index()
-            
-            # Plot
-            fig_ts = px.line(
-                ts_data,
-                x=date_col,
-                y=value_col,
-                title=f"{value_col} Over Time",
-                markers=len(ts_data) < 50
-            )
-            fig_ts.update_layout(height=chart_height)
-            st.plotly_chart(fig_ts, use_container_width=True)
-            
-            # Rolling average
-            if len(ts_data) > 10:
-                window = st.slider("Rolling Window", 2, 20, 5)
+            try:
+                # Prepare time series data
+                ts_data = df[[date_col, value_col]].dropna()
+                ts_data = ts_data.sort_values(date_col)
                 
-                ts_data['Rolling Avg'] = ts_data[value_col].rolling(window).mean()
+                # Resample options
+                resample_freq = st.selectbox(
+                    "Resample",
+                    ["None", "Daily", "Weekly", "Monthly", "Quarterly"]
+                )
                 
-                fig_roll = px.line(
+                if resample_freq != "None":
+                    freq_map = {
+                        "Daily": "D",
+                        "Weekly": "W",
+                        "Monthly": "ME",
+                        "Quarterly": "QE"
+                    }
+                    ts_data = ts_data.set_index(date_col)
+                    ts_data = ts_data.resample(freq_map[resample_freq]).mean().reset_index()
+                
+                # Plot
+                fig_ts = px.line(
                     ts_data,
                     x=date_col,
-                    y=[value_col, 'Rolling Avg'],
-                    title=f"{value_col} with {window}-Period Rolling Average",
-                    labels={'value': value_col}
+                    y=value_col,
+                    title=f"{value_col} Over Time",
+                    markers=len(ts_data) < 50
                 )
-                fig_roll.update_layout(height=chart_height)
-                st.plotly_chart(fig_roll, use_container_width=True)
+                fig_ts.update_layout(height=chart_height)
+                st.plotly_chart(fig_ts, use_container_width=True)
+                
+                # Rolling average
+                if len(ts_data) > 10:
+                    window = st.slider("Rolling Window", 2, 20, 5)
+                    
+                    ts_data['Rolling Avg'] = ts_data[value_col].rolling(window).mean()
+                    
+                    fig_roll = px.line(
+                        ts_data,
+                        x=date_col,
+                        y=[value_col, 'Rolling Avg'],
+                        title=f"{value_col} with {window}-Period Rolling Average",
+                        labels={'value': value_col}
+                    )
+                    fig_roll.update_layout(height=chart_height)
+                    st.plotly_chart(fig_roll, use_container_width=True)
+            except Exception as e:
+                st.error(f"⚠️ Could not create time series plot: {str(e)[:150]}...")
     
     else:
         st.info("No date columns found. Please ensure your data has datetime columns for trend analysis.")
@@ -602,44 +663,54 @@ with tab5:
     
     # Numeric insights
     for col in numeric_cols[:5]:  # Limit to top 5
-        data = df[col].dropna()
-        skew = data.skew()
-        cv = (data.std() / data.mean()) * 100 if data.mean() != 0 else 0
-        
-        if abs(skew) > 1.5:
-            direction = "right" if skew > 0 else "left"
-            insights.append((
-                "📊",
-                f"{col} is heavily skewed {direction} (skew={skew:.2f}) - consider transformation"
-            ))
-        
-        if cv > 80:
-            insights.append((
-                "📊",
-                f"{col} has high variability (CV={cv:.1f}%) - investigate outliers"
-            ))
+        try:
+            data = df[col].dropna()
+            if len(data) > 1:
+                skew = data.skew()
+                cv = (data.std() / data.mean()) * 100 if data.mean() != 0 else 0
+                
+                if abs(skew) > 1.5:
+                    direction = "right" if skew > 0 else "left"
+                    insights.append((
+                        "📊",
+                        f"{col} is heavily skewed {direction} (skew={skew:.2f}) - consider transformation"
+                    ))
+                
+                if cv > 80:
+                    insights.append((
+                        "📊",
+                        f"{col} has high variability (CV={cv:.1f}%) - investigate outliers"
+                    ))
+        except:
+            pass
     
     # Correlation insights
     if len(numeric_cols) >= 2:
-        corr_matrix = df[numeric_cols].corr().abs()
-        for i in range(len(corr_matrix.columns)):
-            for j in range(i+1, len(corr_matrix.columns)):
-                if corr_matrix.iloc[i, j] > 0.8:
-                    insights.append((
-                        "🔗",
-                        f"Strong correlation between {corr_matrix.columns[i]} and {corr_matrix.columns[j]} "
-                        f"(r={corr_matrix.iloc[i, j]:.2f})"
-                    ))
+        try:
+            corr_matrix = df[numeric_cols].corr().abs()
+            for i in range(len(corr_matrix.columns)):
+                for j in range(i+1, len(corr_matrix.columns)):
+                    if corr_matrix.iloc[i, j] > 0.8:
+                        insights.append((
+                            "🔗",
+                            f"Strong correlation between {corr_matrix.columns[i]} and {corr_matrix.columns[j]} "
+                            f"(r={corr_matrix.iloc[i, j]:.2f})"
+                        ))
+        except:
+            pass
     
     # Categorical insights
     for col in categorical_cols[:3]:
-        unique_count = df[col].nunique()
-        if unique_count == 1:
-            insights.append(("⚠️", f"{col} has only one unique value - consider dropping"))
-        elif unique_count == len(df):
-            insights.append(("🆔", f"{col} is likely an ID column - consider excluding from analysis"))
-        elif unique_count > 20:
-            insights.append(("🏷️", f"{col} has high cardinality ({unique_count} categories)"))
+        try:
+            unique_count = df[col].nunique()
+            if unique_count == 1:
+                insights.append(("⚠️", f"{col} has only one unique value - consider dropping"))
+            elif unique_count == len(df):
+                insights.append(("🆔", f"{col} is likely an ID column - consider excluding from analysis"))
+            elif unique_count > 20:
+                insights.append(("🏷️", f"{col} has high cardinality ({unique_count} categories)"))
+        except:
+            pass
     
     # Display insights
     if insights:
