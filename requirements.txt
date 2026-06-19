@@ -3,5 +3,7 @@ pandas
 numpy
 plotly
 openpyxl
-groq
+scipy
+statsmodels
 python-dotenv
+groq
